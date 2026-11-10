@@ -20,21 +20,27 @@ if ($Action -in 'Install', 'Remove') {
 
 if ($Action -in 'Plan', 'Install') {
     $package = @(Get-AppxPackage -Name Claude | Where-Object PackageFamilyName -eq 'Claude_pzs8sxrjxfjjc')
-    if ($package.Count -ne 1) {
-        throw 'Could not identify one installed Claude Desktop package for this Windows user.'
+    if ($package.Count -gt 1) {
+        throw 'More than one Claude Desktop package was found for this Windows user.'
     }
-    $desktopFolder = Join-Path $package[0].InstallLocation 'app'
-    if (-not (Test-Path -LiteralPath (Join-Path $desktopFolder 'Claude.exe') -PathType Leaf)) {
-        throw 'Could not find Claude Desktop in its package folder.'
+    $programs = @()
+    if ($package.Count -eq 1) {
+        $desktopFolder = Join-Path $package[0].InstallLocation 'app'
+        if (!(Test-Path -LiteralPath (Join-Path $desktopFolder 'Claude.exe') -PathType Leaf)) {
+            throw 'Could not find Claude Desktop in its package folder.'
+        }
+        $programs += Get-ChildItem -LiteralPath $desktopFolder -Filter '*.exe' -File -Recurse |
+            Sort-Object FullName | Select-Object -ExpandProperty FullName
     }
-    $cli = Join-Path $env:USERPROFILE '.local\bin\claude.exe'
-    $cliFile = Get-Item -LiteralPath $cli
-    if ($cliFile.VersionInfo.ProductName -ne 'Claude Code') {
-        throw 'The expected Claude Code executable could not be identified.'
+    $cliPaths = @((Join-Path $env:USERPROFILE '.local\bin\claude.exe')) +
+        @(Get-Command claude.exe -CommandType Application -All -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)
+    foreach ($path in ($cliPaths | Select-Object -Unique)) {
+        $cli = Get-Item -LiteralPath $path -ErrorAction SilentlyContinue
+        if ($cli -and $cli.VersionInfo.ProductName -eq 'Claude Code') { $programs += $cli.FullName }
     }
-    $desktopPrograms = Get-ChildItem -LiteralPath $desktopFolder -Filter '*.exe' -File -Recurse |
-        Sort-Object FullName | Select-Object -ExpandProperty FullName
-    $arguments += @($cli) + @($desktopPrograms)
+    if (!$programs.Count) { throw 'No supported Claude Desktop package or native Claude Code executable was found.' }
+    if (!$package.Count) { $arguments += '--cli-only' }
+    $arguments += $programs
 }
 
 & $guard @arguments
