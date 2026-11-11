@@ -41,6 +41,8 @@ PopCat 热点转发与 Protect 的应用级过滤作用在不同位置。关闭�
 
 面板内可以勾选或取消 **登录 Windows 后自动启动面板和提醒**。如需恢复用物理 Wi‑Fi 共享，先关热点并断开 PopCat TUN，再到 Windows 移动热点设置选择物理 Wi‑Fi。
 
+登录启动会把 Protect 放在托盘。用开始菜单或托盘图标打开面板时，网卡和热点状态会在后台读取。如果面板本身启动失败，可以查看 `%LOCALAPPDATA%\Protect\startup.log`。
+
 ## 真实断开测试
 
 `Test-PopCatRecovery.ps1` 需要管理员权限和一个新的本机日志目录。`DryRun` 只检查 Claude 已退出、保护规则已启用、热点已关闭、Google 探针已连通，以及独立恢复进程已就绪。`Live` 通过同样的检查后，短暂禁用 PopCat 虚拟网卡，并用 Packet Monitor 观察目标为 Google 公共 DNS 的测试流量。

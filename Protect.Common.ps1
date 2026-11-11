@@ -28,7 +28,7 @@ function Set-ProtectShortcut {
         return
     }
     $shortcut.TargetPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $shortcut.Arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass $fileArgument"
+    $shortcut.Arguments = "-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass $fileArgument"
     if ($Folder -eq 'Startup') { $shortcut.Arguments += ' -Tray' }
     $shortcut.WorkingDirectory = $PSScriptRoot
     $shortcut.IconLocation = Join-Path $PSScriptRoot 'ClaudeNetworkGuard.exe'

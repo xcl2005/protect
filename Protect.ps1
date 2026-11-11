@@ -9,6 +9,23 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$startupLog = Join-Path $env:LOCALAPPDATA 'Protect\startup.log'
+trap {
+    $failure = $_
+    try {
+        $null = New-Item -ItemType Directory -Path (Split-Path -Parent $startupLog) -Force
+        '{0:yyyy-MM-dd HH:mm:ss} {1}: {2}' -f (Get-Date), $failure.Exception.GetType().Name, $failure.Exception.Message |
+            Set-Content -LiteralPath $startupLog -Encoding UTF8
+    } catch {}
+    if (!$Tray -and !$SmokeTest -and !$GuardAction) {
+        try {
+            Add-Type -AssemblyName System.Windows.Forms
+            $null = [Windows.Forms.MessageBox]::Show("Protect 无法启动。请查看日志：$startupLog", 'Protect', 'OK', 'Error')
+        } catch {}
+    }
+    exit 1
+}
+
 $powerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 . (Join-Path $PSScriptRoot 'Protect.Common.ps1')
 $guardScript = Join-Path $PSScriptRoot 'ClaudeNetworkGuard.ps1'
@@ -54,10 +71,14 @@ Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 $mutex = $null
 $signal = $null
 if (!$SmokeTest) {
-    $first = $false
-    $mutex = [Threading.Mutex]::new($true, 'Local\ClaudePopCatProtectPanel', [ref]$first)
     $signal = [Threading.EventWaitHandle]::new($false, 'AutoReset', 'Local\ClaudePopCatProtectShow')
-    if (!$first) {
+    $mutex = [Threading.Mutex]::new($false, 'Local\ClaudePopCatProtectPanel')
+    try {
+        $ownsMutex = $mutex.WaitOne(0)
+    } catch [Threading.AbandonedMutexException] {
+        $ownsMutex = $true
+    }
+    if (!$ownsMutex) {
         if (!$Tray) { $null = $signal.Set() }
         $signal.Dispose()
         $mutex.Dispose()
@@ -166,38 +187,67 @@ $noticeForm.Add_FormClosing({
 })
 
 function Show-Panel {
-    Refresh-Status
     $form.Show()
     $form.WindowState = 'Normal'
-    $form.Activate()
+    $null = $form.Activate()
+    Refresh-Status
 }
 
-function Get-PopCatState {
-    $processIds = @(Get-Process -Name PopCat -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
-    $running = $processIds.Count -gt 0
-    $up = $running -and [bool](Get-ProtectPopCatAdapter)
-    [pscustomobject]@{ Running = $running; Ready = $up; ProcessIds = $processIds }
-}
-
-function Update-Tunnel([object] $State) {
-    $tunnelLabel.Text = if ($State.Ready) { 'PopCat TUN：网卡已连接' } else { 'PopCat TUN：未连接' }
-    $guardOn.Enabled = $State.Ready
-    $probeButton.Enabled = $State.Ready
+$readStatus = {
+    param([string] $Root, [bool] $ReadHotspot)
+    $ErrorActionPreference = 'Stop'
+    . (Join-Path $Root 'Protect.Common.ps1')
+    $state = $null
+    $hotspot = $null
+    try {
+        $processIds = @(Get-Process -Name PopCat -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+        $running = $processIds.Count -gt 0
+        $up = $running -and [bool](Get-ProtectPopCatAdapter)
+        $state = [pscustomobject]@{ Running = $running; Ready = $up; ProcessIds = $processIds }
+    } catch {
+        # Keep the last valid state for tunnel change notifications.
+    }
+    if ($ReadHotspot) {
+        try { $hotspot = & (Join-Path $Root 'PopCat-Hotspot.ps1') -Action Status } catch {}
+    }
+    [pscustomobject]@{ Tunnel = $state; Hotspot = $hotspot; HotspotQueried = $ReadHotspot }
 }
 
 function Refresh-Status {
-    $state = Get-PopCatState
-    Update-Tunnel $state
-    try {
-        $hotspot = & $hotspotScript -Action Status
+    $script:nextStatus = [DateTime]::MinValue
+}
+
+function Show-Status([object] $Snapshot) {
+    $state = $Snapshot.Tunnel
+    if ($state) {
+        $tunnelLabel.Text = if ($state.Ready) { 'PopCat TUN：网卡已连接' } else { 'PopCat TUN：未连接' }
+        if ($script:previousState) {
+            $notice = Get-TunnelNotice $script:previousState $state
+            if ($notice) {
+                $noticeLabel.Text = "$notice。热点及 Claude 代理可能中断。"
+                if (!$noticeForm.Visible) { $noticeForm.Show() }
+                $null = $noticeForm.Activate()
+            }
+        }
+        $script:previousState = $state
+    } else {
+        $tunnelLabel.Text = 'PopCat TUN：暂时无法读取状态'
+    }
+    $ready = [bool]($state -and $state.Ready)
+    $guardOn.Enabled = $ready
+    $probeButton.Enabled = $ready
+    if (!$Snapshot.HotspotQueried) { return }
+
+    $hotspot = $Snapshot.Hotspot
+    if ($hotspot) {
         $hotspotLabel.Text = switch ($hotspot.State) {
             'On' { "Windows 热点：已开启 · $($hotspot.Clients) 台设备" }
             'Off' { 'Windows 热点：已关闭' }
             default { "Windows 热点：$($hotspot.State)" }
         }
-        $hotspotOn.Enabled = $state.Ready -and $hotspot.State -eq 'Off'
+        $hotspotOn.Enabled = $ready -and $hotspot.State -eq 'Off'
         $hotspotOff.Enabled = $hotspot.State -eq 'On'
-    } catch {
+    } else {
         $hotspotLabel.Text = 'Windows 热点：读取失败，请查看系统设置'
         $hotspotOn.Enabled = $false
         $hotspotOff.Enabled = $false
@@ -277,8 +327,24 @@ function Get-TunnelNotice([object] $Before, [object] $After) {
     if ($Before.Ready -and !$After.Ready) { return 'PopCat TUN 已断开' }
 }
 
+$statusReader = [PowerShell]::Create()
+function Start-StatusRead([bool] $ReadHotspot) {
+    $statusReader.Commands.Clear()
+    $null = $statusReader.AddScript($readStatus.ToString()).AddArgument($PSScriptRoot).AddArgument($ReadHotspot)
+    $statusReader.BeginInvoke()
+}
+
+$script:previousState = $null
+$script:pendingStatus = $null
+$guardOn.Enabled = $false
+$probeButton.Enabled = $false
+$hotspotOn.Enabled = $false
+$hotspotOff.Enabled = $false
 if ($SmokeTest) {
-    Refresh-Status
+    $pending = Start-StatusRead $true
+    if (!$pending.AsyncWaitHandle.WaitOne(10000)) { throw 'Background status query timed out.' }
+    $status = $statusReader.EndInvoke($pending) | Select-Object -Last 1
+    Show-Status $status
     $online = [pscustomobject]@{Running = $true; Ready = $true; ProcessIds = @(1)}
     $offline = [pscustomobject]@{Running = $false; Ready = $false; ProcessIds = @()}
     $restarted = [pscustomobject]@{Running = $true; Ready = $true; ProcessIds = @(2)}
@@ -290,24 +356,26 @@ if ($SmokeTest) {
     $menu.Dispose()
     $icon.Dispose()
     $context.Dispose()
+    $statusReader.Dispose()
     'Protect UI, hotspot status and simulated PopCat exit checks passed.'
     exit
 }
 
-$script:previousState = Get-PopCatState
+Refresh-Status
 $timer = [Windows.Forms.Timer]::new()
-$timer.Interval = 3000
+$timer.Interval = 250
 $timer.Add_Tick({
     try {
         if ($signal.WaitOne(0)) { Show-Panel }
-        $state = Get-PopCatState
-        $notice = Get-TunnelNotice $script:previousState $state
-        $script:previousState = $state
-        if ($form.Visible) { Refresh-Status }
-        if ($notice) {
-            $noticeLabel.Text = "$notice。热点及 Claude 代理可能中断。"
-            if (!$noticeForm.Visible) { $noticeForm.Show() }
-            $noticeForm.Activate()
+        if ($script:pendingStatus -and $script:pendingStatus.IsCompleted) {
+            $pending = $script:pendingStatus
+            $script:pendingStatus = $null
+            $status = $statusReader.EndInvoke($pending) | Select-Object -Last 1
+            Show-Status $status
+        }
+        if (!$script:pendingStatus -and [DateTime]::UtcNow -ge $script:nextStatus) {
+            $script:nextStatus = [DateTime]::UtcNow.AddSeconds(3)
+            $script:pendingStatus = Start-StatusRead $form.Visible
         }
     } catch {
         $tunnelLabel.Text = 'PopCat TUN：暂时无法读取状态'
@@ -329,4 +397,5 @@ try {
     $signal.Dispose()
     $mutex.ReleaseMutex()
     $mutex.Dispose()
+    $statusReader.Dispose()
 }
