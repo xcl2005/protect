@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -21,6 +22,7 @@
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "user32.lib")
 
 namespace {
 constexpr GUID ProviderKey{0xe806b976, 0xc249, 0x4601, {0xa3, 0x27, 0x5e, 0x3a, 0xcb, 0xd1, 0x33, 0x16}};
@@ -473,11 +475,51 @@ void SelfTest() {
     std::wcout << L"IPv4 and IPv6 loopback: block control passed, guard exception passed, cleanup passed.\n";
     std::wcout << L"Active persistent Claude rules: " << after << L".\n";
 }
+
+int PanelLaunchError(const std::wstring& message) {
+    MessageBoxW(nullptr, message.c_str(), L"Protect", MB_OK | MB_ICONERROR);
+    return 1;
+}
+
+int OpenPanel() {
+    wchar_t executable[32768]{};
+    const DWORD length = GetModuleFileNameW(nullptr, executable, ARRAYSIZE(executable));
+    if (!length || length == ARRAYSIZE(executable)) {
+        return PanelLaunchError(L"Could not locate the Protect project folder.");
+    }
+    const auto folder = std::filesystem::path(executable).parent_path();
+    const auto panel = folder / L"Protect.ps1";
+    const DWORD attributes = GetFileAttributesW(panel.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) {
+        return PanelLaunchError(L"Protect.ps1 is missing. Extract the full project and keep its files together.");
+    }
+
+    wchar_t systemDirectory[MAX_PATH]{};
+    const UINT size = GetSystemDirectoryW(systemDirectory, ARRAYSIZE(systemDirectory));
+    if (!size || size >= ARRAYSIZE(systemDirectory)) {
+        return PanelLaunchError(L"Could not locate Windows PowerShell.");
+    }
+    const auto powershell = std::filesystem::path(systemDirectory) / L"WindowsPowerShell\\v1.0\\powershell.exe";
+    std::wstring commandLine = L"\"" + powershell.native() +
+        L"\" -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File \"" + panel.native() + L"\"";
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    if (!CreateProcessW(powershell.c_str(), commandLine.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+        nullptr, folder.c_str(), &startup, &process)) {
+        const DWORD error = GetLastError();
+        return PanelLaunchError(L"Could not start the Protect panel. Windows error " + std::to_wstring(error) + L".");
+    }
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return 0;
+}
 }
 
 int wmain(int argc, wchar_t** argv) {
     OutputLog log;
     try {
+        if (argc == 1) return OpenPanel();
         if (argc >= 4 && std::wstring(argv[1]) == L"--log") {
             log.Open(argv[2]);
             argc -= 2;
