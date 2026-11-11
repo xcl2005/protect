@@ -126,17 +126,16 @@ $hotspotOff = Add-Button '关闭热点' 204 162 122 { Invoke-HotspotAction Stop 
 $null = Add-Button '刷新' 337 162 76 { Refresh-Status }
 $null = Add-Button '断开 PopCat 前检查' 18 207 175 { Show-DisconnectCheck }
 $probeButton = Add-Button 'Google 防泄漏探针' 204 207 175 { Invoke-GuardAction Probe }
-$startupPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'Protect.lnk'
 $startup = [Windows.Forms.CheckBox]::new()
-$startup.Text = '登录 Windows 后自动启动面板和提醒'
+$startup.Text = '登录 Windows 后自动打开 Protect 面板'
 $startup.SetBounds(18, 253, 509, 28)
-$startup.Checked = Test-Path -LiteralPath $startupPath -PathType Leaf
+$startup.Enabled = $false
 $form.Controls.Add($startup)
 $startup.Add_Click({
     try {
-        Set-ProtectShortcut -Folder Startup -Remove:(!$startup.Checked)
+        Set-ProtectStartup -Remove:(!$startup.Checked)
     } catch {
-        $startup.Checked = Test-Path -LiteralPath $startupPath -PathType Leaf
+        $startup.Checked = Test-ProtectStartupEnabled
         Show-Problem $_.Exception.Message
     }
 })
@@ -199,6 +198,7 @@ $readStatus = {
     . (Join-Path $Root 'Protect.Common.ps1')
     $state = $null
     $hotspot = $null
+    $startupEnabled = $null
     try {
         $processIds = @(Get-Process -Name PopCat -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
         $running = $processIds.Count -gt 0
@@ -209,8 +209,9 @@ $readStatus = {
     }
     if ($ReadHotspot) {
         try { $hotspot = & (Join-Path $Root 'PopCat-Hotspot.ps1') -Action Status } catch {}
+        try { $startupEnabled = Test-ProtectStartupEnabled } catch {}
     }
-    [pscustomobject]@{ Tunnel = $state; Hotspot = $hotspot; HotspotQueried = $ReadHotspot }
+    [pscustomobject]@{ Tunnel = $state; Hotspot = $hotspot; HotspotQueried = $ReadHotspot; StartupEnabled = $startupEnabled }
 }
 
 function Refresh-Status {
@@ -237,6 +238,10 @@ function Show-Status([object] $Snapshot) {
     $guardOn.Enabled = $ready
     $probeButton.Enabled = $ready
     if (!$Snapshot.HotspotQueried) { return }
+    if ($null -ne $Snapshot.StartupEnabled) {
+        $startup.Checked = $Snapshot.StartupEnabled
+        $startup.Enabled = $true
+    }
 
     $hotspot = $Snapshot.Hotspot
     if ($hotspot) {

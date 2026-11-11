@@ -35,3 +35,42 @@ function Set-ProtectShortcut {
     $shortcut.Description = 'Claude protection and PopCat hotspot controls'
     $shortcut.Save()
 }
+
+function Get-ProtectStartupTaskName {
+    'Protect-' + [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+}
+
+function Test-ProtectStartupEnabled {
+    $task = Get-ScheduledTask -TaskPath '\' -TaskName (Get-ProtectStartupTaskName) -ErrorAction SilentlyContinue
+    if ($task) { return $task.State -ne 'Disabled' }
+    Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('Startup')) 'Protect.lnk') -PathType Leaf
+}
+
+function Set-ProtectStartup {
+    param([switch] $Remove)
+
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $taskName = Get-ProtectStartupTaskName
+    $task = Get-ScheduledTask -TaskPath '\' -TaskName $taskName -ErrorAction SilentlyContinue
+    $panelArgument = '-File "{0}"' -f (Join-Path $PSScriptRoot 'Protect.ps1')
+    if ($task) {
+        $existingArguments = [string]$task.Actions[0].Arguments
+        if ($task.Actions.Count -ne 1 -or $existingArguments.IndexOf($panelArgument, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+            throw 'A Protect logon task already points to a different project folder.'
+        }
+    }
+    if ($Remove) {
+        if ($task) { Unregister-ScheduledTask -TaskPath '\' -TaskName $taskName -Confirm:$false }
+    } else {
+        $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        $arguments = "-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass $panelArgument"
+        $action = New-ScheduledTaskAction -Execute $powershell -Argument $arguments -WorkingDirectory $PSScriptRoot
+        $trigger = New-ScheduledTaskTrigger -AtLogOn -User $identity.Name
+        $trigger.Delay = 'PT8S'
+        $principal = New-ScheduledTaskPrincipal -UserId $identity.User.Value -LogonType Interactive -RunLevel Limited
+        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+        $null = Register-ScheduledTask -TaskPath '\' -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'Open the Protect panel after Windows sign-in' -Force
+    }
+    $legacy = Join-Path ([Environment]::GetFolderPath('Startup')) 'Protect.lnk'
+    if (Test-Path -LiteralPath $legacy -PathType Leaf) { Set-ProtectShortcut -Folder Startup -Remove }
+}

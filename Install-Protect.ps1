@@ -10,8 +10,8 @@ $ErrorActionPreference = 'Stop'
 
 if ($Action -eq 'Remove') {
     Set-ProtectShortcut -Folder Programs -Remove
-    Set-ProtectShortcut -Folder Startup -Remove
-    'Removed Protect shortcuts for this Windows user.'
+    Set-ProtectStartup -Remove
+    'Removed the Protect shortcut and logon task for this Windows user.'
     return
 }
 
@@ -22,5 +22,5 @@ foreach ($file in 'Protect.ps1', 'PopCat-Hotspot.ps1', 'ClaudeNetworkGuard.ps1',
 }
 
 Set-ProtectShortcut -Folder Programs
-Set-ProtectShortcut -Folder Startup -Remove:$NoStartup
+Set-ProtectStartup -Remove:$NoStartup
 'Installed the Protect Start menu shortcut. Open Protect from Start to use the panel.'

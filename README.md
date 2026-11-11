@@ -14,7 +14,7 @@
    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-Protect.ps1
    ```
 
-   也可在 GitHub 下载 ZIP 并完整解压，再从解压目录运行安装命令。安装会为当前用户创建开始菜单和登录启动入口。只想创建开始菜单入口时，给安装命令加 `-NoStartup`。
+   也可在 GitHub 下载 ZIP 并完整解压，再从解压目录运行安装命令。安装会为当前用户创建开始菜单快捷方式和登录任务。只想创建开始菜单快捷方式时，给安装命令加 `-NoStartup`。
 
 2. 启动 PopCat 并连上 TUN。可先预览这台电脑上将被保护的程序路径。
 
@@ -39,9 +39,9 @@
 
 PopCat 热点转发与 Protect 的应用级过滤作用在不同位置。关闭热点不会撤销 Protect 规则，关闭保护不会重新配置热点。面板中的热点开关状态来自 Windows，外部开启的热点可能使用其他共享来源。
 
-面板内可以勾选或取消 **登录 Windows 后自动启动面板和提醒**。如需恢复用物理 Wi‑Fi 共享，先关热点并断开 PopCat TUN，再到 Windows 移动热点设置选择物理 Wi‑Fi。
+面板内可以勾选或取消 **登录 Windows 后自动打开 Protect 面板**。如需恢复用物理 Wi‑Fi 共享，先关热点并断开 PopCat TUN，再到 Windows 移动热点设置选择物理 Wi‑Fi。
 
-登录启动会把 Protect 放在托盘。用开始菜单或托盘图标打开面板时，网卡和热点状态会在后台读取。如果面板本身启动失败，可以查看 `%LOCALAPPDATA%\Protect\startup.log`。
+登录任务会在当前用户登录约 8 秒后显示面板。关闭面板窗口后，可以从开始菜单或通知区域的 Protect 盾牌图标打开它。如果图标在右下角的隐藏图标菜单中，可在「设置 → 个性化 → 任务栏 → 其他系统托盘图标」打开常显开关。Windows 设置可能把这枚盾牌图标标为 **Windows PowerShell 5.1**。网卡和热点状态在后台读取。如果面板本身启动失败，可以查看 `%LOCALAPPDATA%\Protect\startup.log`。
 
 ## 真实断开测试
 
